@@ -23,8 +23,14 @@ from common.db import db_conn, replay_events
 RISK_COLOR = {"low": "green", "med": "yellow", "high": "red"}
 
 
-async def list_threads() -> None:
-    console = Console()
+async def fetch_recent_threads(limit: int = 25) -> list[dict]:
+    """Recent sessions as plain dicts (used by the CLI table and the Streamlit sidebar).
+
+    `worst_risk` ranks high > med > low explicitly — a plain MAX(risk_level)
+    compares strings, which would rank 'med' above 'high'. Rows written by
+    `fetch_pr` (no confidence yet, neutral 'med') are excluded from the
+    ranking so they don't mask the real outcome.
+    """
     async with db_conn() as conn:
         async with conn.execute(
             """
@@ -32,18 +38,35 @@ async def list_threads() -> None:
                    pr_url,
                    MIN(timestamp)        AS started,
                    MAX(timestamp)        AS last_event,
-                   MAX(risk_level)       AS worst_risk,
+                   CASE MAX(CASE WHEN action = 'fetch_pr' THEN 0
+                                 WHEN risk_level = 'high' THEN 3
+                                 WHEN risk_level = 'med'  THEN 2
+                                 WHEN risk_level = 'low'  THEN 1 ELSE 0 END)
+                        WHEN 3 THEN 'high' WHEN 2 THEN 'med' WHEN 1 THEN 'low'
+                        ELSE '-' END     AS worst_risk,
+                   (SELECT e2.decision FROM audit_events e2
+                     WHERE e2.thread_id = audit_events.thread_id
+                     ORDER BY e2.id DESC LIMIT 1) AS last_decision,
+                   (SELECT e3.action FROM audit_events e3
+                     WHERE e3.thread_id = audit_events.thread_id
+                     ORDER BY e3.id DESC LIMIT 1) AS last_action,
                    COUNT(*)              AS events
               FROM audit_events
              GROUP BY thread_id, pr_url
              ORDER BY MAX(timestamp) DESC
-             LIMIT 25
-            """
+             LIMIT ?
+            """,
+            (limit,),
         ) as cur:
-            rows = await cur.fetchall()
+            return [dict(r) for r in await cur.fetchall()]
+
+
+async def list_threads() -> None:
+    console = Console()
+    rows = await fetch_recent_threads()
 
     table = Table(title="Recent review sessions")
-    for col in ("thread_id", "pr_url", "started", "last_event", "worst_risk", "events"):
+    for col in ("thread_id", "pr_url", "started", "last_event", "worst_risk", "last_action", "events"):
         table.add_column(col)
     for r in rows:
         table.add_row(
@@ -52,6 +75,7 @@ async def list_threads() -> None:
             str(r["started"]),
             str(r["last_event"]),
             str(r["worst_risk"]),
+            str(r["last_action"]),
             str(r["events"]),
         )
     console.print(table)

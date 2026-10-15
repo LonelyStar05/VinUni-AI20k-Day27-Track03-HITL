@@ -80,6 +80,26 @@ async def write_audit_event(
         await conn.commit()
 
 
+async def has_event(*, thread_id: str, action: str, decision: str) -> str | None:
+    """Return the timestamp of an existing (thread, action, decision) row, or None.
+
+    Used to keep "pending" rows idempotent: a node that calls interrupt()
+    re-executes from the top when the graph resumes, so an audit write placed
+    before interrupt() would otherwise be duplicated.
+    """
+    async with db_conn() as conn:
+        async with conn.execute(
+            """
+            SELECT timestamp FROM audit_events
+             WHERE thread_id = ? AND action = ? AND decision = ?
+             ORDER BY id LIMIT 1
+            """,
+            (thread_id, action, decision),
+        ) as cur:
+            row = await cur.fetchone()
+    return row["timestamp"] if row else None
+
+
 async def replay_events(thread_id: str) -> list[dict[str, Any]]:
     """Return every event for a thread, ordered by time. Used by audit/replay.py."""
     async with db_conn() as conn:

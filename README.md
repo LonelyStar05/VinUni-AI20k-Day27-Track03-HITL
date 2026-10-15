@@ -312,3 +312,50 @@ rm hitl_audit.db
 ```bash
 sqlite3 hitl_audit.db "SELECT action, confidence, decision, reviewer_id FROM audit_events ORDER BY id;"
 ```
+
+---
+
+## Solution notes (completed lab)
+
+All 5 exercises are implemented. Run order:
+
+```bash
+uv sync
+cp .env.example .env            # OPENROUTER_API_KEY, GITHUB_TOKEN, GITHUB_USER
+uv run python exercises/exercise_1_confidence.py --pr https://github.com/VinUni-AI20k/PR-Demo/pull/1
+uv run python exercises/exercise_2_hitl.py       --pr https://github.com/VinUni-AI20k/PR-Demo/pull/1
+uv run python exercises/exercise_3_escalation.py --pr https://github.com/VinUni-AI20k/PR-Demo/pull/2
+uv run python exercises/exercise_4_audit.py      --pr https://github.com/VinUni-AI20k/PR-Demo/pull/2
+uv run python -m audit.replay --list
+uv run streamlit run app.py
+```
+
+**Offline E2E (no API keys needed)** — a deterministic fake LLM + fake GitHub (`tests/fakes.py`):
+
+```bash
+uv run pytest -q                                   # 22 tests: routing, interrupt/resume, Q&A, audit rows, crash-resume
+HITL_DB_PATH=/tmp/demo.db uv run streamlit run tests/mock_app.py   # full UI in mock mode
+```
+
+Fake PRs in mock mode: `/pull/1` → human approval (65%), `/pull/2` → escalate (45% → 82% after Q&A), any other number → auto-approve (90%).
+
+### What was added beyond the TODOs
+
+| Change | Why |
+|---|---|
+| `common/prompts.py` — one calibrated analyze / synthesize / edit prompt shared by every exercise and the app | Confidence bands in the prompt match the 58 / 73% thresholds; escalation questions must cite file/function |
+| Idempotent "pending" audit rows (`common.db.has_event`) | A node that calls `interrupt()` re-runs from the top on resume, so the "before" audit row would otherwise be written twice |
+| `execution_time_ms` on HITL rows = reviewer response time | Measured from the pending row's timestamp, survives process restarts |
+| `audit.replay.fetch_recent_threads` + fixed `worst_risk` | `MAX(risk_level)` compares strings, so `'med' > 'high'` — now ranked explicitly |
+| `post_review_comment` returns the comment `html_url` | Needed for the UI's "View comment on GitHub" link |
+| `build_graph(cp, confirm_refined=True)` (used by the UI) | After escalation the refined review goes back through Approve / Reject / Edit before posting, as the Exercise 5 table asks |
+| Bonus 4 — auto-edit | Choosing **Edit** makes the LLM rewrite the review from your instructions, then posts it |
+| `common/checkpoint.py` allow-lists `PRAnalysis` / `ReviewComment` for msgpack | Silences LangGraph's "deserializing unregistered type" warning (soon an error) |
+| `exercise_4_audit.py --thread <id>` resumes a paused session from SQLite | Crash-resume from the CLI |
+| UI: `?thread=<id>` in the URL, sidebar sessions, reviewer id, dry-run toggle, audit timeline | Reload / share link restores the exact paused card |
+
+### Screenshots (mock mode)
+
+| Human approval (58–72%) | Escalation (<58%) | Refined review → final confirm |
+|---|---|---|
+| ![](docs/screenshots/2_approval.png) | ![](docs/screenshots/4_escalation.png) | ![](docs/screenshots/5_refined.png) |
