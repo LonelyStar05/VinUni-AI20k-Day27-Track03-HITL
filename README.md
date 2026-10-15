@@ -321,7 +321,7 @@ All 5 exercises are implemented. Run order:
 
 ```bash
 uv sync
-cp .env.example .env            # OPENROUTER_API_KEY, GITHUB_TOKEN, GITHUB_USER
+cp .env.example .env            # GEMINI_API_KEY (or OPENROUTER_API_KEY), GITHUB_TOKEN, GITHUB_USER
 uv run python exercises/exercise_1_confidence.py --pr https://github.com/VinUni-AI20k/PR-Demo/pull/1
 uv run python exercises/exercise_2_hitl.py       --pr https://github.com/VinUni-AI20k/PR-Demo/pull/1
 uv run python exercises/exercise_3_escalation.py --pr https://github.com/VinUni-AI20k/PR-Demo/pull/2
