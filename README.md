@@ -359,3 +359,19 @@ Fake PRs in mock mode: `/pull/1` → human approval (65%), `/pull/2` → escalat
 | Human approval (58–72%) | Escalation (<58%) | Refined review → final confirm |
 |---|---|---|
 | ![](docs/screenshots/2_approval.png) | ![](docs/screenshots/4_escalation.png) | ![](docs/screenshots/5_refined.png) |
+
+### Real run — Gemini (`gemini-3.1-flash-lite`, dry-run, 2026-10-15)
+
+| PR | Confidence | Branch | Outcome | Audit events |
+|---|---|---|---|---|
+| #1 Add task priority field | 70% | `human_approval` ✅ | reviewer approved → `committed` | 6 |
+| #2 Add user login + cloud sync | 30% | `escalate` ✅ → `synthesize` 90% | `committed_after_escalation` | 7 |
+
+**Calibration finding.** On the same PR #1, `gemini-3.8-flash` self-scored **95%** and went straight to
+`auto_approve`, missing the schema-migration issue that `gemini-3.1-flash-lite` (70%) caught. The 58 / 73%
+thresholds only work if the model's self-reported confidence is calibrated, and calibration differs per
+model — so thresholds should be re-tuned per model (e.g. with the `audit_events` query from Bonus 2), and
+security-sensitive file patterns could force a human step regardless of confidence.
+
+Notes: `gemini-2.5-flash` is no longer offered to new keys; the free tier allows ~20 requests/day per model,
+so `get_llm()` keeps `max_retries=2`.
