@@ -13,7 +13,7 @@ def get_llm(temperature: float = 0.2) -> ChatOpenAI:
     gemini_key = os.environ.get("GEMINI_API_KEY")
     if gemini_key:
         return ChatOpenAI(
-            model=os.environ.get("GEMINI_MODEL", "gemini-3.8-flash"),
+            model=os.environ.get("GEMINI_MODEL", "gemini-3.1-flash-lite"),
             base_url=GEMINI_BASE_URL,
             api_key=gemini_key,
             max_retries=2,  # free tier = 20 req/day per model; keep retries low
