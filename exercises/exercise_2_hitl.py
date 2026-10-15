@@ -19,6 +19,7 @@ from rich.panel import Panel
 
 from common.github import fetch_pr, post_review_comment
 from common.llm import get_llm
+from common.prompts import build_review_messages
 from common.schemas import (
     AUTO_APPROVE_THRESHOLD,
     ESCALATE_THRESHOLD,
@@ -42,10 +43,7 @@ def node_analyze(state: ReviewState) -> dict:
     console.print("[cyan]→ analyze[/cyan]")
     llm = get_llm().with_structured_output(PRAnalysis)
     with console.status("[dim]LLM reviewing the diff...[/dim]"):
-        analysis = llm.invoke([
-            {"role": "system", "content": "Senior reviewer. Structured output."},
-            {"role": "user", "content": f"Title: {state['pr_title']}\nDiff:\n{state['pr_diff']}"},
-        ])
+        analysis = llm.invoke(build_review_messages(state))
     console.print(f"  [green]✓[/green] confidence={analysis.confidence:.0%}, {len(analysis.comments)} comment(s)")
     return {"analysis": analysis}
 
@@ -63,17 +61,23 @@ def node_route(state: ReviewState) -> dict:
 def node_human_approval(state: ReviewState) -> dict:
     """Pause and ask the human."""
     a = state["analysis"]
-    # TODO: call interrupt(payload) where payload contains these fields:
-    #         "kind": "approval_request",
-    #         "confidence": a.confidence,
-    #         "confidence_reasoning": a.confidence_reasoning,
-    #         "summary": a.summary,
-    #         "comments": [c.model_dump() for c in a.comments],
-    #         "diff_preview": state["pr_diff"][:2000],
-    # interrupt() returns whatever the caller passes via Command(resume=...).
-    # response = interrupt(...)
-    # return {"human_choice": response["choice"], "human_feedback": response.get("feedback")}
-    raise NotImplementedError("Call interrupt() with an approval_request payload")
+    # NOTE: no side effects before interrupt() — on resume this node re-runs
+    # from the top, so anything above this line executes twice.
+    response = interrupt({
+        "kind": "approval_request",
+        "pr_url": state["pr_url"],
+        "confidence": a.confidence,
+        "confidence_reasoning": a.confidence_reasoning,
+        "summary": a.summary,
+        "risk_factors": a.risk_factors,
+        "comments": [c.model_dump() for c in a.comments],
+        "diff_preview": state["pr_diff"][:2000],
+    })
+    choice = (response or {}).get("choice")
+    if choice not in {"approve", "reject", "edit"}:
+        raise ValueError(f"Invalid reviewer choice: {choice!r}")
+    console.print(f"  [green]✓[/green] reviewer chose [bold]{choice}[/bold]")
+    return {"human_choice": choice, "human_feedback": response.get("feedback") or None}
 
 
 def _render_comment_body(state: ReviewState) -> str:
@@ -100,8 +104,13 @@ def _post(state: ReviewState, label: str) -> str:
 
 def node_commit(state: ReviewState) -> dict:
     console.print("[cyan]→ commit[/cyan]")
-    if state.get("human_choice") == "approve":
+    choice = state.get("human_choice")
+    if choice == "approve":
         return {"final_action": _post(state, "committed")}
+    if choice == "edit":
+        # Reviewer amended the review: post it together with their note
+        # (rendered by _render_comment_body as "Reviewer note: ...").
+        return {"final_action": _post(state, "committed_with_edit")}
     console.print(f"  [yellow]·[/yellow] skipping comment (choice={state.get('human_choice')})")
     return {"final_action": "rejected"}
 
@@ -133,8 +142,8 @@ def build_graph():
     g.add_edge("human_approval", "commit")
     g.add_edge("commit", END)
     g.add_edge("escalate", END)
-    # TODO: compile with checkpointer=MemorySaver()
-    return g.compile()
+    # interrupt() needs a checkpointer to persist the paused state.
+    return g.compile(checkpointer=MemorySaver())
 
 
 def prompt_human(payload: dict) -> dict:
@@ -174,12 +183,10 @@ def main() -> None:
 
     result = app.invoke({"pr_url": args.pr, "thread_id": thread_id}, cfg)
 
-    # TODO: write a `while "__interrupt__" in result:` loop:
-    #   - take payload from result["__interrupt__"][0].value
-    #   - call prompt_human(payload)
-    #   - resume with app.invoke(Command(resume=<answer>), cfg)
-    # while "__interrupt__" in result:
-    #     ...
+    while "__interrupt__" in result:
+        payload = result["__interrupt__"][0].value
+        answer = prompt_human(payload)
+        result = app.invoke(Command(resume=answer), cfg)
 
     console.rule("Done")
     console.print(result.get("final_action"))

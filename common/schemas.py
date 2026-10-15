@@ -136,4 +136,6 @@ class ReviewState(TypedDict, total=False):
 
     # Populated by commit / final nodes
     posted_comment_body: str | None
+    comment_url: str | None
+    initial_confidence: float | None   # set by synthesize (confidence before Q&A)
     final_action: str | None
